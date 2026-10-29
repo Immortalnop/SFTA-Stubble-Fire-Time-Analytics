@@ -1,0 +1,1 @@
+"""Stubble Fire Timing Analytics."""

@@ -1,0 +1,119 @@
+# SFTA configuration. Paths, regions, windows and thresholds live here, not in code.
+
+# Raw and processed data live outside OneDrive so sync does not choke on large files.
+data_dir: C:/sfta_data
+
+years: [2016, 2026]          # inclusive; 2026 is partial/NRT until Nov 30
+season: {start: "09-15", end: "11-30"}
+baseline: {start: "09-01", end: "09-14"}   # Delhi PM2.5 baseline before burning
+
+region:
+  states: [Punjab, Haryana]
+  bbox: [73.8, 27.6, 77.6, 32.6]          # west, south, east, north
+  gadm_url: https://geodata.ucdavis.edu/gadm/gadm4.1/json/gadm41_IND_1.json.zip
+
+firms:
+  api: https://firms.modaps.eosdis.nasa.gov/api
+  # Sensor -> [standard (SP) source, near-real-time source]. SP preferred where available.
+  sources:
+    MODIS: [MODIS_SP, MODIS_NRT]
+    SNPP: [VIIRS_SNPP_SP, VIIRS_SNPP_NRT]
+    NOAA20: [VIIRS_NOAA20_SP, VIIRS_NOAA20_NRT]
+    NOAA21: [VIIRS_NOAA21_SP, VIIRS_NOAA21_NRT]
+  day_range: 5                 # API maximum per request
+  modis_min_confidence: 30
+  viirs_confidence: [n, h]     # nominal, high
+  dedup_grid_deg: 0.0034       # ~375 m
+  static_grid_deg: 0.01        # grid for the static-source mask applied to NRT data
+  low_frp_mw: 5
+  near_nadir_scan_km: 0.5      # VIIRS I-band scan pixel size; nadir is ~0.375
+
+delhi:
+  bbox: [76.84, 28.40, 77.35, 28.88]
+
+# Fires outside Punjab/Haryana that can also reach Delhi; an H3 covariate so they are not read as decoupling.
+spillover:
+  states: [UttarPradesh, MadhyaPradesh]   # GADM 4.1 NAME_1 spelling
+  bbox: [74.0, 21.0, 84.7, 30.5]           # union of both states
+  sensors: [SNPP]                          # same sensor as analysis.fire_sensor
+
+pm25:
+  openaq_api: https://api.openaq.org/v3
+  parameter_id: 2              # PM2.5
+  provider_pattern: "CPCB|caaqm"
+  reference_sensors: [5398, 23534]   # US Embassy New Delhi (State Air until 2016-11, AirNow after); continuous 2016-2026
+  valid_range: [0, 999]        # exclusive low, inclusive high
+  flat_run_hours: 6
+  min_daily_coverage: 0.75
+  night_hours: [18, 6]         # evening of day d 18:00 to d+1 06:00 IST
+
+era5:
+  area: [29.0, 76.7, 28.3, 77.6]   # north, west, south, east (Delhi box)
+  months: ["09", "10", "11"]
+  time_step_hours: 3               # 3-hourly keeps multi-year requests under the CDS cost limit; daily means barely change
+  nw_sector_deg: [270, 360]        # 850 hPa wind FROM this sector carries Punjab/Haryana smoke
+
+analysis:
+  fire_sensor: SNPP            # consistent single-sensor series (no NOAA-20/21 inflation)
+  fire_lags: [1, 2]            # days; smoke transport lag used in the regression
+  corr_lags: [0, 1, 2, 3, 4]
+  bootstrap_n: 2000
+  block_days: 7
+  train_years: [2016, 2021]    # counterfactual fit (pre-shift)
+  exclude_from_train: []       # sensitivity: [2020]
+  seed: 42
+  min_november_days: 15      # finished seasons with fewer valid November PM2.5 days are dropped
+  exclude_unfinished_season: true   # a season whose last day is not past yet is left out of H3 fits and tables
+  hidden_pooled_years: [2023, 2025] # pooled group in the hidden-fire test
+  spillover_control: true   # add lagged log(1 + UP/MP fires) to the H3 controls when firms_spill_daily.parquet exists
+
+# Diwali (Lakshmi Puja) dates; a +/-2 day window gets a dummy.
+diwali:
+  2016: 2016-10-30
+  2017: 2017-10-19
+  2018: 2018-11-07
+  2019: 2019-10-27
+  2020: 2020-11-14
+  2021: 2021-11-04
+  2022: 2022-10-24
+  2023: 2023-11-12
+  2024: 2024-10-31
+  2025: 2025-10-20
+  2026: 2026-11-08
+
+geo:
+  base_url: https://datalsasaf.lsasvcs.ipma.pt/PRODUCTS/MSG-IODC/FRP-PIXEL/HDF5
+  years: [2017, 2025]            # server folders seen: 2017-2025
+  slot_minutes: 15
+  cell_deg: 0.04                 # ~ one IODC pixel at 30N; events link across 8-neighbour cells
+  max_gap_slots: 3               # detections in a cell may skip up to 3 slots (cloud/FRP flicker) and stay one event
+  threads: 8
+  hours_window: [0, 24]          # IST hours kept
+  late_cutoffs: [15, 17]         # report share of events starting after these IST hours
+
+h2:
+  duration_multipliers: [0.5, 1.0, 2.0]   # GEO duration is a lower bound; sensitivity
+  mc_draws: 1000
+  slot_jitter_h: 0.125
+  pass_jitter_h: 0.25
+  afternoon_hours: [12, 18]
+  top_quantile: 0.99
+
+burned_area:
+  ee_project_env: EE_PROJECT
+  districts: [Sangrur, Bathinda, Firozpur, Kaithal]   # GAUL ADM2 names; check the match count on first run
+  pre: ["09-15", "10-05"]
+  post: ["11-20", "12-10"]
+  scale_m: 20
+  worldcover: ESA/WorldCover/v200/2021
+  cropland_class: 40
+  viirs_buffer_m: 375
+  labels_csv: labels/burn_labels.csv     # lon,lat,year,burned(0/1); ~200 hand-labelled fields
+  low_confidence_years: [2016, 2017]     # Sentinel-2A only, 10-day revisit
+
+tracers:
+  co_collection: COPERNICUS/S5P/OFFL/L3_CO
+  co_band: CO_column_number_density
+  aod_collection: MODIS/061/MCD19A2_GRANULES
+  aod_band: Optical_Depth_047
+  start_year: 2018
